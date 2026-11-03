@@ -1,0 +1,176 @@
+# ==============================================================================
+# PROYECTO: SEGMENTACIÓN DE CLIENTES (MALL CUSTOMERS DATASET)
+# Asignatura: Clustering y Aprendizaje No Supervisado
+# Formato: Script completo R / Rmd listo para entrega en GitHub
+# ==============================================================================
+
+# 0. Carga de librerías necesarias
+if (!require("cluster")) install.packages("cluster")
+if (!require("ggplot2")) install.packages("ggplot2")
+if (!require("factoextra")) install.packages("factoextra")
+
+library(cluster)
+library(ggplot2)
+library(factoextra)
+
+# ==============================================================================
+# 1. CARGA DEL DATASET
+# ==============================================================================
+# Asegúrate de colocar el archivo 'Mall_Customers.csv' en tu directorio de trabajo
+df <- read.csv("Mall_Customers.csv")
+
+# Exploración inicial
+cat("--- Primeras filas del dataset ---\n")
+print(head(df))
+
+# ==============================================================================
+# 2. EXPLORACIÓN Y LIMPIEZA DE DATOS
+# ==============================================================================
+cat("\n--- Dimensiones del dataset ---\n")
+print(dim(df))
+
+cat("\n--- Estructura de variables ---\n")
+print(str(df))
+
+cat("\n--- Resumen estadístico ---\n")
+print(summary(df))
+
+# Renombrar columnas para facilitar su manejo sintáctico
+colnames(df) <- c("CustomerID", "Genre", "Age", "Income", "SpendingScore")
+
+# Codificar 'Genre' como variable numérica (1 para Masculino, 0 para Femenino)
+df$Genre_num <- ifelse(df$Genre == "Male", 1, 0)
+
+# Normalización de las variables numéricas clave: Income y SpendingScore
+# Seleccionamos las columnas numéricas clave
+features <- df[, c("Income", "SpendingScore")]
+
+# Aplicamos scale() para estandarizar (Media = 0, Desviación Estándar = 1)
+scaled_features <- scale(features)
+
+# ==============================================================================
+# 3. IMPLEMENTACIÓN DE MODELOS DE CLUSTERING
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# MODELO 1: K-MEANS
+# ------------------------------------------------------------------------------
+set.seed(123) # Fijamos semilla para reproducibilidad
+
+# Método del codo (Elbow Method) evaluando k de 1 a 10
+tot_withinss <- vector()
+k_values <- 1:10
+
+for (k in k_values) {
+  km_model <- kmeans(scaled_features, centers = k, nstart = 25)
+  tot_withinss[k] <- km_model$tot.withinss
+}
+
+# Gráfico del Método del Codo
+plot(k_values, tot_withinss, type = "b", pch = 19, col = "blue",
+     xlab = "Número de Clusters (k)", 
+     ylab = "Suma de Cuadrados Intra-cluster (tot.withinss)",
+     main = "Método del Codo para Seleccionar k Óptimo")
+
+# Con base en el gráfico del codo, el valor óptimo de clusters se sitúa en k = 5
+k_optimo <- 5
+
+# Entrenamiento del modelo final K-Means
+set.seed(123)
+kmeans_final <- kmeans(scaled_features, centers = k_optimo, nstart = 25)
+
+# Asignación de clústeres al dataset original
+df$Cluster_KMeans <- as.factor(kmeans_final$cluster)
+
+# ------------------------------------------------------------------------------
+# MODELO 2: CLUSTERING JERÁRQUICO
+# ------------------------------------------------------------------------------
+# Cálculo de la matriz de distancias euclídeas
+dist_matrix <- dist(scaled_features, method = "euclidean")
+
+# Aplicación del método ward.D
+hclust_ward <- hclust(dist_matrix, method = "ward.D")
+
+# Visualización del Dendrograma
+plot(hclust_ward, main = "Dendrograma - Clustering Jerárquico (ward.D)",
+     xlab = "Observaciones", sub = "", labels = FALSE)
+rect.hclust(hclust_ward, k = k_optimo, border = "red")
+
+# Corte del dendrograma en k = 5 clústeres
+hierarchical_clusters <- cutree(hclust_ward, k = k_optimo)
+
+# Asignación de clústeres al dataset original
+df$Cluster_Jerarquico <- as.factor(hierarchical_clusters)
+
+# ==============================================================================
+# 4. EVALUACIÓN DE MODELOS (MÉTRICA DE SILUETA)
+# ==============================================================================
+
+# Silueta para K-Means
+sil_kmeans <- silhouette(kmeans_final$cluster, dist_matrix)
+avg_sil_kmeans <- mean(sil_kmeans[, 3])
+
+# Silueta para Clustering Jerárquico
+sil_jerarquico <- silhouette(hierarchical_clusters, dist_matrix)
+avg_sil_jerarquico <- mean(sil_jerarquico[, 3])
+
+cat("\n==================================================\n")
+cat("EVALUACIÓN DE MODELOS (COEFICIENTE DE SILUETA)\n")
+cat("==================================================\n")
+cat("Promedio de Silueta K-Means:", round(avg_sil_kmeans, 4), "\n")
+cat("Promedio de Silueta Jerárquico (ward.D):", round(avg_sil_jerarquico, 4), "\n")
+
+if (avg_sil_kmeans > avg_sil_jerarquico) {
+  cat("SELECCIÓN: El modelo K-Means presenta una mayor calidad de agrupación.\n")
+} else {
+  cat("SELECCIÓN: El modelo Jerárquico presenta una mayor calidad de agrupación.\n")
+}
+
+# ==============================================================================
+# 5. ANÁLISIS DESCRIPTIVO DE SEGMENTOS (PERFILADO)
+# ==============================================================================
+
+# Estadísticas descriptivas promedio por Cluster usando K-Means (Mejor modelo)
+cat("\n--- Perfil Promedio de Clústeres (K-Means) ---\n")
+perfiles_kmeans <- aggregate(cbind(Age, Income, SpendingScore) ~ Cluster_KMeans, 
+                             data = df, FUN = mean)
+print(perfiles_kmeans)
+
+cat("\n--- Conteo de Clientes por Clúster ---\n")
+print(table(df$Cluster_KMeans))
+
+# ==============================================================================
+# 6. VISUALIZACIÓN DE RESULTADOS
+# ==============================================================================
+
+# Gráfico de Dispersión - K-Means
+g1 <- ggplot(df, aes(x = Income, y = SpendingScore, color = Cluster_KMeans)) +
+  geom_point(size = 3, alpha = 0.8) +
+  labs(title = "Segmentación de Clientes - K-Means (k = 5)",
+       x = "Ingresos Anuales (k$)",
+       y = "Puntuación de Gasto (1-100)",
+       color = "Cluster") +
+  theme_minimal()
+
+print(g1)
+
+# Gráfico de Dispersión - Clustering Jerárquico
+g2 <- ggplot(df, aes(x = Income, y = SpendingScore, color = Cluster_Jerarquico)) +
+  geom_point(size = 3, alpha = 0.8) +
+  labs(title = "Segmentación de Clientes - Clustering Jerárquico (k = 5)",
+       x = "Ingresos Anuales (k$)",
+       y = "Puntuación de Gasto (1-100)",
+       color = "Cluster") +
+  theme_minimal()
+
+print(g2)
+
+# ==============================================================================
+# 7. INTERPRETACIONAL Y CONCLUSIONES DE LOS PERFILES
+# ==============================================================================
+# Basado en las medias de Income y SpendingScore, los 5 segmentos se caracterizan como:
+# 1. Ingresos Altos - Gasto Alto (VIP / Target Principal): Clientes con elevado poder adquisitivo y alta propensión al gasto.
+# 2. Ingresos Altos - Gasto Bajo (Ahorradores): Clientes de alto nivel económico pero cautelosos en sus compras.
+# 3. Ingresos Bajos - Gasto Alto (Jóvenes Impulsivos): Clientes con ingresos reducidos pero un alto gasto en el centro comercial.
+# 4. Ingresos Bajos - Gasto Bajo (Conservadores): Clientes con bajo nivel de ingresos y bajo nivel de gasto.
+# 5. Ingresos Medios - Gasto Medio (Promedio): Grupo neutro que representa la media estandar de la población de compradores.
